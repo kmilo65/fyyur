@@ -11,13 +11,14 @@ from flask_moment import Moment
 from flask_sqlalchemy import SQLAlchemy
 import logging
 from logging import Formatter, FileHandler
-from flask_wtf import Form
+from flask_wtf import Form, CsrfProtect
 from forms import *
 import config
 from models import Venue,Artist,Show,db
 from flask_migrate import Migrate
 from datetime import date
 import sys
+
 
 
 #----------------------------------------------------------------------------#
@@ -27,6 +28,8 @@ import sys
 app = Flask(__name__)
 moment = Moment(app)
 app.config.from_object('config')
+app.secret_key=config.SECRET_KEY
+csrf=CsrfProtect(app)
 #db = SQLAlchemy(app)
 db.init_app(app)  # <-- just init it
 migrate = Migrate(app, db)
@@ -84,12 +87,12 @@ def search_venues():
   # seach for Hop should return "The Musical Hop".
   # search for "Music" should return "The Musical Hop" and "Park Square Live Music & Coffee"
   search_term=request.form['search_term']
-  search_result = Venue.query.order_by(Venue.id).filter(Venue.name.ilike('%{}%'.format(search_term))).all() 
+  search_result = Venue.query.order_by(Venue.id).filter(Venue.name.ilike('%{}%'.format(search_term))).order_by(Show.start_time).all() 
   count=len(search_result)
  
   data=[{'id':venue.id,
         'name':venue.name,
-         'num_upcoming_shows':len(db.session.query(Show).filter(Show.venue_id == venue.id).filter(Show.start_time > datetime.now()).all())}
+         'num_upcoming_shows':len(db.session.query(Show).filter(Show.venue_id == venue.id).filter(Show.start_time > datetime.now()).order_by(Show.start_time).all())}
         for venue in search_result ]
 
   response={
@@ -110,13 +113,26 @@ def show_venue(venue_id):
   formatted_venue=Venue.format_venue(venue)
   
   # past shows
+  """
   past_shows=[Show.format_show_venue(show) for show in
-                  Show.query.filter(Show.venue_id==venue_id,Show.start_time<datetime.now()).order_by(Show.start_time).all()]
+                  Show.query.filter(Show.venue_id==venue_id,Show.start_time<datetime.now()).order_by(Show.start_time).all()] 
+  """
+  past_shows_query = db.session.query(Show).join(Venue).filter(Show.venue_id==venue_id).filter(Show.start_time<datetime.now()).order_by(Show.start_time).all()   
+  past_shows = []
+  for show in past_shows_query:
+      past_shows.append(Show.format_show_venue(show))
   past_shows_count=len(past_shows)
+ 
 
   # upcoming shows
+  """
   upcoming_shows=[Show.format_show_venue(show) for show in 
-                    Show.query.filter(Show.venue_id==venue_id,Show.start_time>=datetime.now()).order_by(Show.start_time).all()]
+                    Show.query.filter(Show.venue_id==venue_id,Show.start_time>=datetime.now()).order_by(Show.start_time).all()] 
+  """
+  upcoming_shows_query = db.session.query(Show).join(Venue).filter(Show.venue_id==venue_id).filter(Show.start_time>=datetime.now()).order_by(Show.start_time).all()   
+  upcoming_shows = []
+  for show in upcoming_shows_query:
+      upcoming_shows.append(Show.format_show_venue(show))
   upcoming_shows_count=len(upcoming_shows)
 
   formatted_venue['past_shows']=past_shows
@@ -141,21 +157,30 @@ def create_venue_submission():
   # TODO: insert form data as a new Venue record in the db, instead
   # TODO: modify data to be the data object returned from db insertion 
   form=VenueForm(request.form)
+
   try:
-    venue=Venue( name=form.name.data,
-                city=form.city.data,
-                state=form.state.data,
-                address=form.address.data,
-                phone=form.phone.data,
-                image_link=form.image_link.data,
-                facebook_link=form.facebook_link.data,
-                website=form.website_link.data,
-                seeking_talent=form.seeking_talent.data,
-                seeking_description=form.seeking_description.data,
-                genres = form.genres.data)
-    Venue.insert_venue(venue)
-    #on successful db insert, flash success
-    flash('Venue ' + request.form['name'] + ' was successfully listed!','success')
+
+    if form.validate_on_submit():
+      
+        venue=Venue( name=form.name.data,
+                    city=form.city.data,
+                    state=form.state.data,
+                    address=form.address.data,
+                    phone=form.phone.data,
+                    image_link=form.image_link.data,
+                    facebook_link=form.facebook_link.data,
+                    website=form.website_link.data,
+                    seeking_talent=form.seeking_talent.data,
+                    seeking_description=form.seeking_description.data,
+                    genres = form.genres.data)
+        Venue.insert_venue(venue)
+        #on successful db insert, flash success
+        flash('Venue ' + request.form['name'] + ' was successfully listed!','success')
+
+    else:
+        for field, message in form.errors.items():
+            flash(field + ' - ' + str(message))
+ 
   
   except:
   #    # TODO: on unsuccessful db insert, flash an error instead.
@@ -176,6 +201,8 @@ def delete_venue(venue_id):
   # SQLAlchemy ORM to delete a record. Handle cases where the session commit could fail.
   # BONUS CHALLENGE: Implement a button to delete a Venue on a Venue Page, have it so that
   # clicking that button delete it from the db then redirect the user to the homepage
+  print(request.args.get('methods'))
+  print(request.get_data)
   if request.method=='DELETE':
     try:
         Show.query.filter_by(venue_id=venue_id).delete()
@@ -249,13 +276,25 @@ def show_artist(artist_id):
   print(formatted_artist)
 
   # past shows
+  """
   past_shows=Show.query.filter(Show.artist_id==artist_id,Show.start_time<datetime.now()).all()
   past_shows=[Show.format_show_artist(show) for show in past_shows]
+  """
+  past_shows_query = db.session.query(Show).join(Venue).filter(Show.artist_id==artist_id).filter(Show.start_time<datetime.now()).order_by(Show.start_time).all()   
+  past_shows = []
+  for show in past_shows_query:
+      past_shows.append(Show.format_show_artist(show))
   past_shows_count=len(past_shows)
 
   # upcoming shows
+  """
   upcoming_shows=Show.query.filter(Show.artist_id==artist_id,Show.start_time>=datetime.now()).all()
   upcoming_shows=[Show.format_show_artist(show) for show in upcoming_shows]
+  """
+  upcoming_shows_query=db.session.query(Show).join(Venue).filter(Show.artist_id==artist_id).filter(Show.start_time>=datetime.now()).order_by(Show.start_time).all()
+  upcoming_shows=[]
+  for show in upcoming_shows_query:
+      upcoming_shows.append(Show.format_show_artist(show))
   upcoming_shows_count=len(upcoming_shows)
 
   formatted_artist['past_shows']=past_shows
@@ -349,20 +388,24 @@ def create_artist_submission():
   form = ArtistForm(request.form)
 
   try:
-    artist=Artist( name=form.name.data,
-                    city=form.city.data,
-                    state=form.state.data,
-                    phone=form.phone.data,
-                    genres=form.genres.data,
-                    facebook_link=form.facebook_link.data,
-                    image_link=form.image_link.data,
-                    website=form.website_link.data,
-                    seeking_venue=form.seeking_venue.data,
-                    seeking_description=form.seeking_description.data)
+    if form.validate_on_submit():
+      artist=Artist( name=form.name.data,
+                      city=form.city.data,
+                      state=form.state.data,
+                      phone=form.phone.data,
+                      genres=form.genres.data,
+                      facebook_link=form.facebook_link.data,
+                      image_link=form.image_link.data,
+                      website=form.website_link.data,
+                      seeking_venue=form.seeking_venue.data,
+                      seeking_description=form.seeking_description.data)
 
-    Artist.insert_artist(artist)
-      # on successful db insert, flash success
-    flash('Artist ' + request.form['name'] + ' was successfully listed!','success')
+      Artist.insert_artist(artist)
+        # on successful db insert, flash success
+      flash('Artist ' + request.form['name'] + ' was successfully listed!','success')
+    else:
+          for field, message in form.errors.items():
+            flash(field + ' - ' + str(message))
   
   except:
       # TODO: on unsuccessful db insert, flash an error instead.
